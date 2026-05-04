@@ -1,4 +1,4 @@
-# CallGraph & Object Liveness Analysis
+# Compile Time Memory Management
 
 A static program analysis tool built on the [Soot](https://github.com/soot-oss/soot) framework that performs whole-program call graph construction, points-to analysis, object liveness tracking, and automatic null-insertion to assist the Java garbage collector (GC) in reclaiming memory earlier.
 
@@ -8,13 +8,10 @@ A static program analysis tool built on the [Soot](https://github.com/soot-oss/s
 
 - [Overview](#overview)
 - [Project Structure](#project-structure)
-- [How It Works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Setup & Configuration](#setup--configuration)
 - [Running the Analysis](#running-the-analysis)
 - [Output](#output)
-- [Debug Mode](#debug-mode)
-- [How to Create a GitHub Repository](#how-to-create-a-github-repository)
 
 ---
 
