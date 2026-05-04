@@ -19,8 +19,8 @@ public class Driver {
             {
                 "out",                           // [0] classPath = TamiFlex-dumped dir
                 "Harness",                       // [1] mainClass = always "Harness" for DaCapo
-                "tests/reflogs/sunflow.log",     // [2] reflection log
-                "sunflow"                        // [3] label for output files
+                "tests/reflogs/avrora.log",      // [2] reflection log
+                "avrora"                         // [3] label for output files
             },
     };
 
@@ -87,7 +87,6 @@ public class Driver {
             out.close();
         }
         long end = System.nanoTime();
-        // Restore stdout so IDE console shows completion
         System.setOut(new PrintStream(new FileOutputStream(java.io.FileDescriptor.out)));
         System.out.println("All benchmarks complete. Results in tests/results/");
         System.out.println("Time taken (ms): " + ((end - start) / 1_000_000));
