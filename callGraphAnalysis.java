@@ -79,7 +79,7 @@ import soot.javaToJimple.*;
 import soot.toolkits.scalar.SimpleLiveLocals;
 import soot.toolkits.scalar.LiveLocals;
 
-public class CalIGraphAnalysis extends SceneTransformer{
+public class callGraphAnalysis extends SceneTransformer{
 	static boolean debug = false;
 	
 	class methodLocal {
@@ -268,9 +268,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 
 		createMethodGraph();
 		
-		// Sorted method list – used everywhere we iterate methodGraph so that
-		// debug output and analysis always visit methods in a deterministic,
-		// lexicographic order by method signature.
 		List<SootMethod> sortedMethods = new ArrayList<SootMethod>(methodGraph.keySet());
 		Collections.sort(sortedMethods, (a, b) -> a.getSignature().compareTo(b.getSignature()));
 
@@ -338,18 +335,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			System.out.println(methodKilled);
 		}
 
-		// =========================================================================
-		// Safe-Local Null Insertion + Field-Link Freeing
-		//
-		// For each method we:
-		//   1. Use methodKilled (= (in ∪ created) − out) as the kill set.
-		//   2. Find safe locals – non-parameter locals whose entire PTA set is
-		//                         within the kill set.
-		//   3. Backward liveness for locals → localNullInsertions.
-		//   4. Apply local-null insertions.
-		//   5. Call freeLinks(killSet, sm) to null dead field links at return
-		//      (args / this only, findPointer singleton rule).
-		// =========================================================================
 		if(debug) {
 			System.out.println("------------------------------------------------------------------------------------");
 			System.out.println("Starting Safe-Local + freeLinks Analysis");
@@ -360,10 +345,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			Body body = sm.getActiveBody();
 			UnitPatchingChain units = body.getUnits();
 
-			// ------------------------------------------------------------------
-			// Step 1 – Kill set: methodKilled = (in ∪ created) − out, computed
-			//           once in performContextInsensitiveAnalysis and reused here.
-			// ------------------------------------------------------------------
 			if (!methodKilled.containsKey(sm)) continue;
 			HashSet<Integer> killSet = methodKilled.get(sm);
 			if (killSet.isEmpty()) continue;
@@ -373,10 +354,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				System.out.println("  Kill Set: " + killSet);
 			}
 
-			// ------------------------------------------------------------------
-			// Step 2 – Identify parameter / this locals (excluded from local
-			//           null insertion; they belong to the caller)
-			// ------------------------------------------------------------------
 			HashSet<Local> parameterLocals = new HashSet<Local>();
 			for(Unit u : units) {
 				if(u instanceof IdentityStmt) {
@@ -388,9 +365,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 
-			// ------------------------------------------------------------------
-			// Step 3 – Safe locals: non-parameter, entire PTA ⊆ killSet
-			// ------------------------------------------------------------------
 			HashSet<Local> safeLocals = new HashSet<Local>();
 			for(methodLocal ml : local2object.keySet()) {
 				if(ml.m != sm) continue;
@@ -409,13 +383,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			if(debug && !safeLocals.isEmpty())
 				System.out.println("  Safe Locals: " + safeLocals);
 
-			// ------------------------------------------------------------------
-			// Step 4 – Backward local liveness → localNullInsertions.
-			//
-			// For each safe (non-parameter) local l, find the last unit in the
-			// body that uses l.  Insert  l = null  immediately after that unit
-			// so the GC can reclaim the object as early as possible.
-			// ------------------------------------------------------------------
 			if (!safeLocals.isEmpty()) {
 				ExceptionalUnitGraph cfg = new ExceptionalUnitGraph(body);
 				LiveLocals liveLocals = new SimpleLiveLocals(cfg);
@@ -443,9 +410,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 					}
 				}
 
-				// ------------------------------------------------------------------
-				// Step 5 – Insert local nulls immediately after their last-use unit.
-				// ------------------------------------------------------------------
 				for (Map.Entry<Unit, Local> e : localNullInsertions) {
 					try {
 						Unit anchor     = e.getKey();
@@ -463,13 +427,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 
-			// ------------------------------------------------------------------
-			// Step 6 – Free dead field links at method return.
-			//
-			// freeLink(sm, killSet, liveObjIn, liveObjOut, safeLocals) frees
-			// field links based on object liveness. Called AFTER safeLocals is
-			// computed so the analysis is consistent with the set built above.
-			// ------------------------------------------------------------------
 			if (!killSet.isEmpty()) {
 				// Compute object liveness for this method
 				ObjectLivenessResult liveness = computeObjectLiveness(sm);
@@ -479,9 +436,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			}
 
 		}
-		// =========================================================================
-		// end of unified analysis
-		// =========================================================================
 		
 		for(SootMethod sm : sortedMethods) {
 			System.out.println(sm.getActiveBody());
@@ -710,16 +664,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 
-			// Scan def boxes for field writes:  a.f = something
-			// JInstanceFieldRef only appears in use boxes for reads (x = a.f).
-			// For writes (a.f = x) it is in the def box, so we must handle it
-			// here separately to populate object2object correctly.
-			//
-			// Note: In standard Soot/Jimple the base local `a` of a LHS field ref
-			// DOES appear in the statement's use boxes (JInstanceFieldRef exposes its
-			// base as a use).  We still handle it here so that:
-			//   (a) object2object is correctly populated for field writes, and
-			//   (b) we don't rely on a particular Soot version's use-box exposure.
 			for(ValueBox vb : s.getDefBoxes()) {
 				if(!(vb.getValue() instanceof JInstanceFieldRef)) continue;
 
@@ -781,8 +725,7 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			return;
 		
 		visited.put(rootMethod, true);
-		
-		// FIX 1: Also skip methods that do not have an active body due to exclusions (prevents crash)
+
 		if(rootMethod.isPhantom() || !rootMethod.hasActiveBody()) return;
 
 		if(rootMethod.getDeclaringClass().getName().startsWith("java", 0) || rootMethod.isConstructor()) return;	
@@ -833,9 +776,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 						u2b.put(succ, succNode);
 					}
 					
-					// Deduplicate: ExceptionalUnitGraph can yield the same successor
-					// on both the normal and exceptional edge; without this check the
-					// Vector gets duplicate entries that inflate in/out sets later.
 					if(!bn.succ.contains(succNode))
 						bn.succ.add(succNode);
 
@@ -986,7 +926,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				// methodReturns AND as one of the overloadedMethods entries.
 				LinkedHashSet<blockNode> returnNodeSet = new LinkedHashSet<blockNode>();
 				
-				// FIX 2: Explicitly check if the map has the method before trying to add it
 				if (calledMethod != null && methodReturns.containsKey(calledMethod)) {
 					returnNodeSet.add(methodReturns.get(calledMethod));
 				}
@@ -1000,7 +939,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 				
 				for(blockNode rn : returnNodeSet) {
-					// FIX 3: Safety null check before adding successor block node (avoids NullPointerException)
 					if (rn != null) {
 						rn.succ.add(bn);
 					}
@@ -1099,10 +1037,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 							hasUnanalyzedCallee = true;
 						}
 					}
-
-					// Edge-case: invokedMethod itself is non-null but absent from
-					// methodHeads (e.g. it resolves to an excluded class directly,
-					// with no overloads at all).
 					if (invokedMethod != null && !methodHeads.containsKey(invokedMethod))
 						hasUnanalyzedCallee = true;
 
@@ -1133,32 +1067,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			next = new LinkedList<blockNode>();
 		}
 
-		// methodKilled[sm] = (in[entry] U created) - in[exit]
-		//
-		// This is the set of objects whose lifetime is entirely contained within sm:
-		//   - objects live at entry that do NOT survive to any return point
-		//   - objects created inside sm
-		//
-		// Why in[exit] and not out[exit]?
-		//
-		// The backward dataflow equations at a return node are:
-		//   out[return] = U out[succ]              (live in callers after the call)
-		//   in[return]  = out[return] U methodUses  (adds PTS of the returned local)
-		//
-		// The returned value's allocation nodes are added to methodUses in
-		// iterateCFG because the return statement's use-boxes contain the
-		// returned local (e.g. "$r1" in "return $r1").  They therefore appear
-		// in in[return] but NOT necessarily in out[return] (which only reflects
-		// what specific callers were already known to need after the call).
-		//
-		// Subtracting out[return] fails to remove the returned object from the
-		// kill set, causing freeLinks to incorrectly null fields that are part
-		// of the returned value -- as seen in getCallback() where r0.callback
-		// is nulled even though $r1 (= r0.callback) is returned.
-		//
-		// Subtracting in[return] is correct: it is the full set of objects live
-		// at the return boundary, i.e. every object that must NOT be freed here.
-		// Since in is a superset of out at every node, this is also strictly safer.
 		for(SootMethod sm : methodGraph.keySet()) {			
 			blockNode entryNode = methodHeads.get(sm).get(0);
 			
@@ -1184,9 +1092,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// ObjectLivenessResult – holds the results of object liveness analysis
-	// =========================================================================
 	class ObjectLivenessResult {
 		HashMap<Unit, HashSet<Integer>> liveObjIn;
 		HashMap<Unit, HashSet<Integer>> liveObjOut;
@@ -1198,28 +1103,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// computeObjectLiveness(sm)
-	//
-	// Performs backward object liveness analysis on the original CFG.
-	// Computes for each unit the set of objects that are live (used) from
-	// that point onwards.
-	//
-	// Since we have flow-insensitive points-to information:
-	//   LiveObjIn[n]  = UseObjSet[n] ∪ LiveObjOut[n]
-	//   LiveObjOut[n] = ∪ LiveObjIn[succ] for all successors of n
-	//
-	// No removal of defs occurs (unlike in traditional liveness), as we
-	// conservatively keep all accessed objects live.
-	//
-	// Handles all cases:
-	//   • Direct local uses: x → PTA(x)
-	//   • Field reads: x.f → PTA(x) ∪ PTA(x, f)
-	//   • Field writes: x.f = y → PTA(x)  [base dereference counts as use]
-	//   • Function arguments: foo(x) → PTA(x) and transitively
-	//   • Return statements: return x → PTA(x)
-	//   • Receiver in instance calls: x.foo() → PTA(x)
-	// =========================================================================
 	ObjectLivenessResult computeObjectLiveness(SootMethod sm) {
 		if (!sm.hasActiveBody()) {
 			return new ObjectLivenessResult(new HashMap<>(), new HashMap<>());
@@ -1231,9 +1114,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		if (debug)
 			System.out.println("[ObjectLiveness] Analyzing method: " + sm.getName());
 		
-		// ──────────────────────────────────────────────────────────────────
-		// Step 1: Compute UseObjSet for each unit
-		// ──────────────────────────────────────────────────────────────────
 		HashMap<Unit, HashSet<Integer>> useObjSet = new HashMap<Unit, HashSet<Integer>>();
 		
 		for (Unit u : body.getUnits()) {
@@ -1244,7 +1124,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			for (ValueBox vb : s.getUseBoxes()) {
 				Value v = vb.getValue();
 				
-				// Case 1: Direct local use (x)
 				if (v instanceof Local) {
 					Local l = (Local) v;
 					PointsToSet pts = pta.reachingObjects(l);
@@ -1257,13 +1136,11 @@ public class CalIGraphAnalysis extends SceneTransformer{
 						});
 					}
 				}
-				// Case 2: Field read on right side (x = y.f or use of y.f)
 				else if (v instanceof JInstanceFieldRef) {
 					JInstanceFieldRef ref = (JInstanceFieldRef) v;
 					Local base = (Local) ref.getBase();
 					SootField f = (SootField) ref.getField();
 					
-					// Base object is used (dereferenced)
 					PointsToSet basePts = pta.reachingObjects(base);
 					if (!(basePts instanceof EmptyPointsToSet)) {
 						((DoublePointsToSet) basePts).forall(new P2SetVisitor() {
@@ -1274,7 +1151,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 						});
 					}
 					
-					// Objects pointed to by base.f are used
 					PointsToSet fieldPts = pta.reachingObjects(base, f);
 					if (!(fieldPts instanceof EmptyPointsToSet)) {
 						((DoublePointsToSet) fieldPts).forall(new P2SetVisitor() {
@@ -1287,8 +1163,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 			
-			// Process def boxes: field writes (x.f = y)
-			// The base local x is used (dereferenced) even though it's in a def box
 			for (ValueBox vb : s.getDefBoxes()) {
 				if (vb.getValue() instanceof JInstanceFieldRef) {
 					JInstanceFieldRef ref = (JInstanceFieldRef) vb.getValue();
@@ -1307,7 +1181,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 			
-			// Case 3: Function calls – arguments and receiver are used
 			for (ValueBox vb : s.getUseBoxes()) {
 				if (vb.getValue() instanceof InvokeExpr) {
 					InvokeExpr ie = (InvokeExpr) vb.getValue();
@@ -1327,8 +1200,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 							}
 						}
 					}
-					
-					// Receiver is used for instance calls
 					if (ie instanceof InstanceInvokeExpr) {
 						Value receiver = ((InstanceInvokeExpr) ie).getBase();
 						if (receiver instanceof Local) {
@@ -1347,7 +1218,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				}
 			}
 			
-			// Case 4: Return statements – returned value is used
 			if (s instanceof ReturnStmt) {
 				ReturnStmt rs = (ReturnStmt) s;
 				Value retVal = rs.getOp();
@@ -1371,9 +1241,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 				System.out.println("  [UseObjSet] " + u + " → " + uses);
 		}
 		
-		// ──────────────────────────────────────────────────────────────────
-		// Step 2: Backward dataflow fixpoint iteration
-		// ──────────────────────────────────────────────────────────────────
 		HashMap<Unit, HashSet<Integer>> liveObjIn = new HashMap<Unit, HashSet<Integer>>();
 		HashMap<Unit, HashSet<Integer>> liveObjOut = new HashMap<Unit, HashSet<Integer>>();
 		
@@ -1383,7 +1250,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			liveObjOut.put(u, new HashSet<Integer>());
 		}
 		
-		// Fixpoint iteration: process units in reverse (backward)
 		boolean changed = true;
 		int iteration = 0;
 		
@@ -1433,11 +1299,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		return new ObjectLivenessResult(liveObjIn, liveObjOut);
 	}
 
-	
-
-	// =========================================================================
-	// Data structure for representing access paths (π)
-	// =========================================================================
 	class FieldPath {
 		List<SootField> fields;  // ordered list of fields in the path
 		Local root;               // starting local variable
@@ -1468,16 +1329,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// FindFieldPaths(O, ρM, σ, σ⁻¹, LM)
-	//
-	// Computes access paths from local variables to a target object O and
-	// extends them through field references only when the access is unambiguous.
-	// The reverse map σ⁻¹ is used to ensure uniqueness.
-	//
-	// Returns: Set of pairs (π, O') where π is an access path and O' is the
-	//          final object reached via that path.
-	// =========================================================================
 	Set<FieldPath> findFieldPaths(Integer O, SootMethod sm,
 	                               HashSet<Local> excludedLocals,
 	                               HashSet<Integer> visiting) {
@@ -1487,7 +1338,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		if (visiting.contains(O)) return result;
 		visiting.add(O);
 		
-		// Direct case: Find locals l s.t. ρM(l) = {O} and l ∉ LM
 		if (object2local.containsKey(O)) {
 			for (methodLocal ml : object2local.get(O)) {
 				if (ml.m != sm) continue;  // belongs to another method
@@ -1501,8 +1351,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 			}
 		}
 		
-		// Indirect case: object2object2.get(O) = { fPrev → [Oprev] }
-		// means Oprev.fPrev → O. Recurse to find a reachable local for Oprev.
 		if (object2object2.containsKey(O)) {
 			HashSet<String> triedParents = new HashSet<String>();
 			for (SootField fPrev : object2object2.get(O).keySet()) {
@@ -1541,19 +1389,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		return result;
 	}
 
-	// =========================================================================
-	// FreeLink(M, killSet, ρM, σ, σ⁻¹, LiveObjIn_M, LiveObjOut_M)
-	//
-	// Main freeing algorithm that processes each node in the method to free
-	// objects that die at that point.
-	//
-	// Parameters:
-	//   sm: SootMethod - the method being analyzed
-	//   killSet: HashSet<Integer> - objects that die in this method
-	//   liveObjIn: HashMap<Unit, HashSet<Integer>> - objects live before each unit
-	//   liveObjOut: HashMap<Unit, HashSet<Integer>> - objects live after each unit
-	//   excludedLocals: HashSet<Local> - safe locals (never use as path roots)
-	// =========================================================================
 	void freeLink(SootMethod sm, 
 	              HashSet<Integer> killSet,
 	              HashMap<Unit, HashSet<Integer>> liveObjIn,
@@ -1591,13 +1426,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// FreeLinkAtLastUse(O, ρM, σ, σ⁻¹, LM)
-	//
-	// Frees field links of an object only when the target of a field access
-	// is uniquely determined. For such unambiguous links, all corresponding
-	// access paths are located and explicitly nulled.
-	// =========================================================================
 	void freeLinkAtLastUse(Integer O, SootMethod sm, Body body,
 	                        HashSet<Local> excludedLocals, Unit insertionPoint) {
 		
@@ -1606,7 +1434,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		for (SootField f : object2object2.get(O).keySet()) {
 			for (Integer Oprime : object2object2.get(O).get(f)) {
 				
-				// Check uniqueness: |σ⁻¹(O', f)| = 1
 				int countReverse = 1;  // We already know this is at least 1
 				int countTotal = object2object2.get(O).get(f).size();
 				
@@ -1632,12 +1459,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// FreeLinkAtExit(O, ρM, σ, σ⁻¹, LM)
-	//
-	// Frees field links at method exit. Used for ambiguous links that need
-	// to be freed regardless of uniqueness to prevent reference cycles.
-	// =========================================================================
 	void freeLinkAtExit(Integer O, SootMethod sm, Body body,
 	                     HashSet<Local> excludedLocals, Unit insertionPoint) {
 		
@@ -1669,15 +1490,6 @@ public class CalIGraphAnalysis extends SceneTransformer{
 		}
 	}
 
-	// =========================================================================
-	// NULL(π)
-	//
-	// Emits null assignments for a field path. For intermediate fields in the
-	// path, generates temporary assignments. For the final field, generates
-	// the null assignment.
-	//
-	// Path π = ⟨l, f₁, f₂, ..., fₖ⟩
-	// =========================================================================
 	void nullPath(FieldPath pi, SootMethod sm, Body body, Unit insertionPoint) {
 		
 		if (pi.fields.isEmpty()) {
